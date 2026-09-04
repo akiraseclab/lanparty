@@ -1,0 +1,43 @@
+# lanparty-coord.service —— lanparty 协调节点(coord) systemd 单元模板
+#
+# 供手工部署参考。使用步骤：
+#   1. 把 lanparty 二进制放到 /usr/local/bin/lanparty（chmod +x）。
+#   2. 将本文件拷贝到 /etc/systemd/system/lanparty-coord.service。
+#   3. 把下面 ExecStart 中的三个占位符替换为实际值：
+#        <NETWORK>  网络名：同一虚拟网的 coord 与所有 peer 必须一致
+#        <PSK>      预共享密钥：建议用 `openssl rand -hex 16` 生成
+#        <LISTEN>   监听地址：默认 0.0.0.0:7800
+#      替换后示例：
+#        ExecStart=/usr/local/bin/lanparty coord --network office-lan --psk 9f86d081884c7d65 --listen 0.0.0.0:7800
+#   4. 执行：
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable --now lanparty-coord
+#
+# 注意：
+#   - coord 只做 TCP 汇聚/转发，普通用户即可运行。User=lanparty 需要先创建账号：
+#       sudo useradd --system --no-create-home --shell /usr/sbin/nologin lanparty
+#     若不想创建账号，删除 User= 行即可以 root 运行（不推荐）。
+#   - 记得放行 <LISTEN> 对应的 TCP 端口（系统防火墙 / 云安全组）。
+#   - coord 不做 PSK 预验证：PSK 错误的 peer 会在首帧解密失败时被断开，
+#     可用 journalctl -u lanparty-coord -f 观察日志。
+#   - 修改本文件的参数后需要 systemctl daemon-reload 并 restart 服务。
+
+[Unit]
+Description=lanparty coordination node
+After=network.target
+
+[Service]
+Type=simple
+User=lanparty
+ExecStart=/usr/local/bin/lanparty coord --network <NETWORK> --psk <PSK> --listen <LISTEN>
+# 进程异常退出后 5 秒自动拉起
+Restart=always
+RestartSec=5
+# 轻量加固：coord 不写文件、不加载内核模块，可以安全收紧
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
