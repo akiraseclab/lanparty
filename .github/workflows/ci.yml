@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test (race)
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+
+      - name: go test
+        if: runner.os == 'Windows'
+        run: go test ./...

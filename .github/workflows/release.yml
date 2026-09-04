@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+            bundle: true
+          - goos: linux
+            goarch: amd64
+            ext: ""
+            bundle: false
+          - goos: linux
+            goarch: arm64
+            ext: ""
+            bundle: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/lanparty-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/lanparty
+
+      - name: Bundle wintun.dll (Windows)
+        if: matrix.bundle
+        run: |
+          curl -fsSLO https://www.wintun.net/builds/wintun-0.14.1.zip
+          unzip -j wintun-0.14.1.zip wintun/bin/amd64/wintun.dll -d dist
+          cd dist
+          zip lanparty-windows-amd64.zip lanparty-windows-amd64.exe wintun.dll
+
+      - name: Zip artifact (non-Windows)
+        if: "!matrix.bundle"
+        run: |
+          cd dist
+          zip lanparty-${{ matrix.goos }}-${{ matrix.goarch }}.zip lanparty-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip

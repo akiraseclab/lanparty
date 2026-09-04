@@ -1,0 +1,11 @@
+# Build artifacts
+dist/
+*.exe
+
+# Driver / vendor bundles
+*.zip
+wintun.dll
+
+# Test / coverage output
+*.test
+*.out
