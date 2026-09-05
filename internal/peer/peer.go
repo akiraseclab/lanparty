@@ -21,6 +21,7 @@ const (
 	reconnectMax     = 15 * time.Second
 	pingInterval     = 15 * time.Second
 	handshakeTimeout = 10 * time.Second
+	readIdleTimeout  = 75 * time.Second // 超过该时长收不到任何帧（含 PONG）则判定链路假死，主动重连
 )
 
 // Version 由 main 注入（go build -ldflags "-X lanparty/internal/peer.Version=v1.0.0"）。
@@ -125,7 +126,7 @@ func (p *Peer) session(ctx context.Context) error {
 
 	go p.pingLoop(runCtx, pconn)
 	go p.tunToNet(runCtx, dev, pconn, vip, prefix, cancel)
-	return p.netToTun(pconn, dev, cancel) // 读循环阻塞；返回即会话结束
+	return p.netToTun(sock, pconn, dev, cancel) // 读循环阻塞；返回即会话结束
 }
 
 // tunToNet 出站方向：虚拟网卡 -> 协调节点。
@@ -170,8 +171,11 @@ func (p *Peer) tunToNet(ctx context.Context, dev tun.Device, pconn *proto.Conn, 
 }
 
 // netToTun 入站方向：协调节点 -> 虚拟网卡。返回即会话结束。
-func (p *Peer) netToTun(pconn *proto.Conn, dev tun.Device, cancel context.CancelFunc) error {
+// 读超时兜底：网络静默假死（无 FIN/RST）时 Receive 会永远阻塞，
+// 靠"每 15s 一次的心跳必有 PONG 回应"这一点，用读超时强制唤醒重连。
+func (p *Peer) netToTun(sock net.Conn, pconn *proto.Conn, dev tun.Device, cancel context.CancelFunc) error {
 	for {
+		sock.SetReadDeadline(time.Now().Add(readIdleTimeout))
 		ftype, body, err := pconn.Receive()
 		if err != nil {
 			cancel()

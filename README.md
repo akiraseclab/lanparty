@@ -3,7 +3,7 @@
 <p align="left">
   <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://go.dev/"><img alt="Go 1.23" src="https://img.shields.io/badge/Go-1.23-00ADD8?logo=go"></a>
-  <a href="#已知限制"><img alt="Status: v0.1 experimental" src="https://img.shields.io/badge/status-v0.1%20experimental-orange"></a>
+  <a href="#已知限制"><img alt="Status: v0.1.1 beta" src="https://img.shields.io/badge/status-v0.1.1%20beta-orange"></a>
 </p>
 
 **lanparty** 是一个开源的「虚拟局域网」联机工具：把分布在不同网络里的几台电脑，通过一台协调节点组成一个虚拟子网，让它们像在同一个局域网里一样互相访问——主打**和朋友联机打游戏**。商业产品中类似的有蒲公英，开源同类项目有 EasyTier。
@@ -38,14 +38,16 @@
 
 - 一个把多台机器接入同一个虚拟 IPv4 子网的最小可用工具；
 - 端到端加密（AES-256-GCM）的成员间通信；
+- 支持子网内**广播/组播转发**——饥荒、MC 等游戏的"局域网搜索"可以直接用；
+- 成员重连**虚拟 IP 保持不变**（按昵称记忆）；
+- Windows 端启动时自动配置防火墙放行（只对虚拟网段生效）；
 - 单二进制、零依赖部署（Windows 除外，需 wintun.dll，见下文）。
 
-**现在（v0.1）不是什么 —— 请务必诚实了解当前状态：**
+**现在（v0.1.1）不是什么 —— 请务必诚实了解当前状态：**
 
-- ⚠️ **v0.1 为实验性版本**，接口和配置格式在后续版本中可能变更；
+- ⚠️ **v0.1.1 为实验性版本**，接口和配置格式在后续版本中可能变更；
 - ⚠️ **仅中转模式**：所有流量都经过协调节点中转，尚无 P2P 打洞（在路线图中）。协调节点的带宽和质量决定整个虚拟网的体验；
 - 虚拟子网**仅支持 IPv4 /24**；
-- **不转发广播/组播**报文，依赖 LAN 广播发现的游戏/设备暂时不可用；
 - 仅支持 **Windows（需管理员权限 + wintun.dll）** 与 **Linux（需 root）**；**macOS 暂未支持**。
 
 ## 架构
@@ -139,6 +141,7 @@ peer 与 coord 之间通过一条 TCP 长连接（默认 `7800` 端口）交换�
 | `PONG` | coord → peer | 心跳应答 |
 | `MEMBERS` | coord → peer | 下发当前成员列表（显示名 + 虚拟 IP） |
 | `PACKET` | 双向 | 加密的虚拟网络 IPv4 报文（peer 上行 / coord 下发） |
+| `BROADCAST` | peer → coord | 广播/组播报文，coord 复制为 `PACKET` 发给其他所有成员（支撑"局域网搜索"类功能，星型分发无环） |
 | `BYE` | peer → coord | 主动退出 |
 
 **握手流程：** peer 发送明文 JSON `Hello`（网络名、显示名等），coord 回复明文 JSON `Welcome`（分配的虚拟 IP、子网、MTU 等）。握手本身不加密，**PSK 的正确性在第一帧解密时才验证**——PSK 错误的 peer 无法解密后续帧，会被立即断开。
@@ -164,14 +167,16 @@ peer 与 coord 之间通过一条 TCP 长连接（默认 `7800` 端口）交换�
 | --- | --- |
 | 仅中转模式 | 所有流量经协调节点，无 P2P 打洞；协调节点带宽 = 全网带宽上限 |
 | 仅 IPv4 /24 | 不支持 IPv6，不支持其他掩码长度 |
-| 无广播/组播 | 依赖 LAN 广播发现的游戏（如某些局域网搜索大厅）暂不可用，需手动填 IP |
+| IP 记忆仅进程内 | coord 重启后，成员首次重连会重新分配 IP（此后保持稳定） |
 | 平台支持 | Windows 需管理员权限 + wintun.dll；Linux 需 root；**macOS 未支持** |
-| 实验性 | v0.1，协议与配置格式可能不兼容变更 |
+| 实验性 | 协议与配置格式可能不兼容变更 |
 
 ## 路线图
 
-- [ ] **v0.2：UDP P2P 打洞** + 中继回退（打洞失败自动回落到协调节点中转）
-- [ ] 广播 / 组播转发
+- [x] ~~广播 / 组播转发~~（v0.1.1 已实现）
+- [x] ~~虚拟 IP 记忆~~（v0.1.1 已实现，coord 重启后需重新分配一次）
+- [ ] **Steam P2P 公网 IP 劫持**：让渔力全开等 Steam 匹配类游戏确定性走 lanparty（设计见 [docs/v0.2-steam-p2p-design.md](./docs/v0.2-steam-p2p-design.md)）
+- [ ] UDP P2P 打洞 + 中继回退（打洞失败自动回落到协调节点中转）
 - [ ] macOS 支持（utun）
 - [ ] GUI 客户端
 - [ ] 用 Noise 协议替换 PSK（去除协调节点可见明文的信任假设）

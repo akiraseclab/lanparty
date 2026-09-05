@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -194,7 +195,7 @@ func (c *Coordinator) handshake(sock net.Conn) (*network, netip.Addr, *proto.Hel
 		if s == nil {
 			return "", "", "", fmt.Errorf("未知网络 %q", h.Network)
 		}
-		addr, aerr := s.allocate(h.Name)
+		addr, aerr := s.allocate(normalizeName(h.Name))
 		if aerr != nil {
 			return "", "", "", aerr
 		}
@@ -204,7 +205,22 @@ func (c *Coordinator) handshake(sock net.Conn) (*network, netip.Addr, *proto.Hel
 	if err != nil {
 		return st, vip, nil, nil, err
 	}
+	hello.Name = normalizeName(hello.Name)
 	return st, vip, hello, pconn, nil
+}
+
+// normalizeName 限制成员昵称长度与内容：成员表会广播昵称，
+// 不设上限的话恶意客户端能用超长昵称把成员表帧撑到超过 MaxFrame。
+func normalizeName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "unnamed"
+	}
+	const maxRunes = 24
+	if r := []rune(name); len(r) > maxRunes {
+		name = string(r[:maxRunes])
+	}
+	return name
 }
 
 // ---------- network 的成员与 IP 管理 ----------
