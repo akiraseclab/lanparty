@@ -32,5 +32,6 @@ func create(name string, mtu int, vip netip.Addr, prefix netip.Prefix) (Device, 
 		dev.Close()
 		return nil, fmt.Errorf("启用虚拟网卡失败: %w", err)
 	}
-	return wrap(dev, mtu)
+	// 10 = virtioNetHdrLen：CreateTUN 启用了 IFF_VNET_HDR，批量接口要求调用方预留
+	return wrap(dev, mtu, linuxTunHeadroom)
 }

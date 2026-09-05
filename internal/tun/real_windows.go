@@ -27,5 +27,5 @@ func create(name string, mtu int, vip netip.Addr, prefix netip.Prefix) (Device, 
 		dev.Close()
 		return nil, fmt.Errorf("netsh 配置网卡地址失败: %v: %s", err, out)
 	}
-	return wrap(dev, mtu)
+	return wrap(dev, mtu, 0)
 }
