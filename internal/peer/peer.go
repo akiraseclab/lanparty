@@ -57,6 +57,7 @@ func New(opts Options, factory TunFactory) *Peer {
 
 // Run 阻塞运行：断线自动指数退避重连，ctx 取消后返回。
 func (p *Peer) Run(ctx context.Context) error {
+	ensureFirewallRule() // Windows：自动放行虚拟网段入站（见 firewall_windows.go）
 	backoff := time.Second
 	for {
 		start := time.Now()
