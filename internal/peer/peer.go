@@ -144,16 +144,28 @@ func (p *Peer) tunToNet(ctx context.Context, dev tun.Device, pconn *proto.Conn, 
 		}
 		pkt := packet[:n]
 		_, dst, ok := ipv4Parts(pkt)
-		// v0.1 只转发虚拟子网内的单播；广播/组播（如 LAN 发现）是路线图功能
-		if !ok || dst == vip || dst.IsMulticast() || !prefix.Contains(dst) || dst == bcast {
+		if !ok || dst == vip {
 			continue
 		}
 		body := proto.PacketBody(vip.As4(), dst.As4(), pkt)
-		if err := pconn.Send(proto.FramePacket, body); err != nil {
-			cancel()
-			pconn.Close()
-			return
+		switch {
+		case dst.IsMulticast() || dst == bcast || dst == netip.AddrFrom4([4]byte{255, 255, 255, 255}):
+			// 广播/组播（饥荒/MC 等游戏的"局域网搜索"靠它）：
+			// 交给协调节点分发给其他所有成员。只在 TUN -> 隧道方向转发，
+			// 隧道方向的广播由读循环直接注入本机协议栈，不会二次转发，无环。
+			if err := pconn.Send(proto.FrameBroadcast, body); err != nil {
+				cancel()
+				pconn.Close()
+				return
+			}
+		case prefix.Contains(dst):
+			if err := pconn.Send(proto.FramePacket, body); err != nil {
+				cancel()
+				pconn.Close()
+				return
+			}
 		}
+		// 子网外的单播直接丢弃（v0.1 不提供虚拟网出网上网）
 	}
 }
 

@@ -178,3 +178,45 @@ func TestUnknownNetworkRejected(t *testing.T) {
 		// 预期行为：加不进来
 	}
 }
+
+func TestBroadcastRelay(t *testing.T) {
+	c := startCoord(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	devA, vipA := joinPeer(t, ctx, c, "A", "secret")
+	devB, _ := joinPeer(t, ctx, c, "B", "secret")
+	time.Sleep(300 * time.Millisecond)
+
+	// A 发局域网发现广播（255.255.255.255），B 应收到，A 自己不能收到回声
+	bc := testPacket(vipA, netip.AddrFrom4([4]byte{255, 255, 255, 255}), []byte("lan-discovery"))
+	if err := devA.FeedOS(bc); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-devB.Delivered():
+		if !bytes.Equal(got, bc) {
+			t.Fatal("B 收到的广播内容不一致")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("B 没有收到 A 的广播")
+	}
+	select {
+	case got := <-devA.Delivered():
+		t.Fatalf("A 收到了自己广播的回声（应被过滤）: %v", got)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestVIPMemory(t *testing.T) {
+	c := startCoord(t)
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	_, vip1 := joinPeer(t, ctx1, c, "reconnector", "secret")
+	cancel1() // 主动下线
+	time.Sleep(time.Second) // 等协调节点处理离席并记忆 IP
+
+	_, vip2 := joinPeer(t, context.Background(), c, "reconnector", "secret")
+	if vip1 != vip2 {
+		t.Fatalf("IP 记忆失败：首次 %s，重连 %s", vip1, vip2)
+	}
+}

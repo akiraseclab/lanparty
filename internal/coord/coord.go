@@ -43,7 +43,8 @@ type network struct {
 	mu      sync.Mutex
 	members map[netip.Addr]*member
 	used    map[netip.Addr]bool
-	next    uint8 // 下一次尝试分配的主机位（从 2 开始，1 留给协调节点习惯位）
+	next    uint8   // 下一次尝试分配的主机位（从 2 开始，1 留给协调节点习惯位）
+	lastVIP map[string]netip.Addr // 按成员名记忆上次的虚拟 IP（进程内，重连不变）
 }
 
 type member struct {
@@ -77,6 +78,7 @@ func Parse(opts Options) (*Coordinator, error) {
 			cfg: cfg, prefix: prefix,
 			members: map[netip.Addr]*member{},
 			used:    map[netip.Addr]bool{},
+			lastVIP: map[string]netip.Addr{},
 			next:    2,
 		}
 	}
@@ -138,7 +140,7 @@ func (c *Coordinator) handle(sock net.Conn) {
 	st.join(m)
 	slog.Info("成员上线", "network", hello.Network, "name", hello.Name, "vip", vip, "remote", sock.RemoteAddr())
 	defer func() {
-		st.leave(vip)
+		st.leave(m)
 		slog.Info("成员下线", "network", hello.Network, "name", hello.Name, "vip", vip)
 	}()
 	st.broadcast()
@@ -165,6 +167,16 @@ func (c *Coordinator) handle(sock net.Conn) {
 				continue
 			}
 			st.forward(vip, dst, body)
+		case proto.FrameBroadcast:
+			src, _, _, err := proto.ParsePacket(body)
+			if err != nil {
+				continue
+			}
+			if netip.AddrFrom4(src) != vip {
+				slog.Warn("广播源地址与分配的 VIP 不符，丢弃", "claimed", netip.AddrFrom4(src), "real", vip)
+				continue
+			}
+			st.flood(vip, body)
 		case proto.FramePing:
 			pconn.Send(proto.FramePong, body)
 		case proto.FrameBye:
@@ -182,7 +194,7 @@ func (c *Coordinator) handshake(sock net.Conn) (*network, netip.Addr, *proto.Hel
 		if s == nil {
 			return "", "", "", fmt.Errorf("未知网络 %q", h.Network)
 		}
-		addr, aerr := s.allocate()
+		addr, aerr := s.allocate(h.Name)
 		if aerr != nil {
 			return "", "", "", aerr
 		}
@@ -197,10 +209,15 @@ func (c *Coordinator) handshake(sock net.Conn) (*network, netip.Addr, *proto.Hel
 
 // ---------- network 的成员与 IP 管理 ----------
 
-// allocate 分配一个空闲虚拟 IP（跳过网络地址、广播地址与 .1）。
-func (n *network) allocate() (netip.Addr, error) {
+// allocate 分配虚拟 IP：优先归还同名成员上次用过的（IP 记忆，重连不变），
+// 否则扫描空闲主机位（跳过网络地址、广播地址与 .1）。
+func (n *network) allocate(name string) (netip.Addr, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if last, ok := n.lastVIP[name]; ok && !n.used[last] {
+		n.used[last] = true
+		return last, nil
+	}
 	base := n.prefix.Masked().Addr().As4()
 	for i := 0; i < 253; i++ {
 		n.next++
@@ -229,10 +246,11 @@ func (n *network) join(m *member) {
 	n.members[m.vip] = m
 }
 
-func (n *network) leave(vip netip.Addr) {
+func (n *network) leave(m *member) {
 	n.mu.Lock()
-	delete(n.members, vip)
-	delete(n.used, vip)
+	delete(n.members, m.vip)
+	delete(n.used, m.vip)
+	n.lastVIP[m.name] = m.vip // 记忆，供同名成员重连时归还
 	n.mu.Unlock()
 	n.broadcast()
 }
@@ -246,6 +264,23 @@ func (n *network) forward(from netip.Addr, dst [4]byte, body []byte) {
 		return // 目标不存在或是发给自己，直接丢弃
 	}
 	m.conn.Send(proto.FramePacket, body) // 发送失败等读循环自己发现并清理
+}
+
+// flood 把广播/组播报文分发给除发送者外的所有成员。
+// 星型拓扑只有协调节点一个分发点，天然无环；转发为 FramePacket，
+// 客户端收到后当作普通入站报文注入 TUN，无需感知广播语义。
+func (n *network) flood(from netip.Addr, body []byte) {
+	n.mu.Lock()
+	targets := make([]*member, 0, len(n.members))
+	for _, m := range n.members {
+		if m.vip != from {
+			targets = append(targets, m)
+		}
+	}
+	n.mu.Unlock()
+	for _, m := range targets {
+		m.conn.Send(proto.FramePacket, body)
+	}
 }
 
 // snapshot 返回排序后的成员列表。

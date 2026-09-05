@@ -28,6 +28,10 @@ const (
 	FrameMembers byte = 0x20 // body: 成员列表 JSON（服务器 -> 客户端）
 	FramePacket  byte = 0x30 // body: src(4B)+dst(4B)+IP报文
 	FrameBye     byte = 0x40 // 主动告别
+	// FrameBroadcast 客户端 -> 服务器：body 同 FramePacket，但 dst 是广播/组播
+	// 地址；服务器将其转成 FramePacket 复制给除发送者外的所有成员（星型拓扑
+	// 只有一个分发点，天然无环）。
+	FrameBroadcast byte = 0x34
 )
 
 const (
